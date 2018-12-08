@@ -8,6 +8,7 @@ using DSharpPlus.CommandsNext;
 using DSharpPlus.CommandsNext.Attributes;
 using System.IO;
 using System.Diagnostics;
+using System.Reflection;
 /*   Invite link
 *   https://discordapp.com/oauth2/authorize?client_id=519613874564104202&scope=bot&permissions=8
 * 
@@ -17,28 +18,42 @@ namespace ProjectMartinB
     class ProcessExt
     {
         static VoiceNextConnection _vnc;
-        static Process proc = new Process();
+        static Process proc;
         static Stream ffout;
 
         public ProcessExt(ProcessStartInfo psi, VoiceNextConnection vnc)
         {
-            proc.StartInfo = psi;
-            bool started = proc.Start();
-            ffout = proc.StandardOutput.BaseStream;
-            _vnc = vnc;
+            try
+            {
+                proc = new Process();
+                proc.StartInfo = psi;
+                _vnc = vnc;
+                bool started = proc.Start();
+                ffout = proc.StandardOutput.BaseStream;
+            }
+            catch (Exception e)
+            {
+                Console.Write(e);
+            }
         }
 
         public async Task play()
         {
-            var buff = new byte[3840];
-            var br = 0;
-            while ((br = await ffout.ReadAsync(buff, 0, buff.Length)) > 0)
+            using (var ms = new MemoryStream())
             {
-                if (br < buff.Length) // not a full sample, mute the rest
-                    for (var i = br; i < buff.Length; i++)
-                        buff[i] = 0;
+                await ffout.CopyToAsync(ms);
+                ms.Position = 0;
 
-                await _vnc.SendAsync(buff, 20);
+                var buff = new byte[3840]; // buffer to hold the PCM data
+                var br = 0;
+                while ((br = ms.Read(buff, 0, buff.Length)) > 0)
+                {
+                    if (br < buff.Length) // it's possible we got less than expected, let's null the remaining part of the buffer
+                        for (var i = br; i < buff.Length; i++)
+                            buff[i] = 0;
+
+                    await _vnc.SendAsync(buff, 20); // we're sending 20ms of data
+                }
             }
         }
     }
@@ -133,6 +148,7 @@ namespace ProjectMartinB
 
         static void Main(string[] args)
         {
+            Console.Write(System.IO.Path.GetDirectoryName(Assembly.GetEntryAssembly().Location));
             MainAsync(args).GetAwaiter().GetResult();
         }
 
