@@ -16,38 +16,35 @@ namespace ProjectMartinB
 {
     class ProcessExt
     {
-        static ProcessStartInfo _psi;
         static VoiceNextConnection _vnc;
-        static Process proc;
+        static Process proc = new Process();
         static Stream ffout;
 
         public ProcessExt(ProcessStartInfo psi, VoiceNextConnection vnc)
         {
-            _psi = psi;
-            _vnc = vnc;
-            proc = Process.Start(_psi);
+            proc.StartInfo = psi;
+            bool started = proc.Start();
             ffout = proc.StandardOutput.BaseStream;
+            _vnc = vnc;
         }
 
         public async Task play()
         {
-            Action action = async () =>
+            var buff = new byte[3840];
+            var br = 0;
+            while ((br = await ffout.ReadAsync(buff, 0, buff.Length)) > 0)
             {
-                var buff = new byte[3840];
-                var br = 0;
-                while ((br = ffout.Read(buff, 0, buff.Length)) > 0)
-                {
-                    if (br < buff.Length) // not a full sample, mute the rest
-                        for (var i = br; i < buff.Length; i++)
-                            buff[i] = 0;
+                if (br < buff.Length) // not a full sample, mute the rest
+                    for (var i = br; i < buff.Length; i++)
+                        buff[i] = 0;
 
-                    await _vnc.SendAsync(buff, 20);
-                }
-            };
+                await _vnc.SendAsync(buff, 20);
+            }
         }
     }
     class MartinCommands
     {
+        Dictionary<ulong, ProcessExt> processes = new Dictionary<ulong, ProcessExt> { };
         static string byeSong = "MartinBye.mp3";
         static List<string> joinSong = new List<string> {"MartinB.mp3", "MartinB2.mp3", "MartinB3.mp3"};
 
@@ -102,16 +99,28 @@ namespace ProjectMartinB
             await ctx.RespondAsync("👌");
             await vnc.SendSpeakingAsync(true);
 
-            ProcessExt proc = new ProcessExt(new ProcessStartInfo
+            if (processes.ContainsKey(ctx.Guild.Id))
             {
-                FileName = "ffmpeg",
-                Arguments = $@"-i ""{file}"" -ac 2 -f s16le -ar 48000 pipe:1",
-                RedirectStandardOutput = true,
-                UseShellExecute = false
-            }, vnc);
+                processes[ctx.Guild.Id] = new ProcessExt(new ProcessStartInfo
+                {
+                    FileName = "ffmpeg",
+                    Arguments = $@"-i ""{file}"" -ac 2 -f s16le -ar 48000 pipe:1",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false
+                }, vnc);
+            }
+            else
+            {
+                processes.Add(ctx.Guild.Id, new ProcessExt(new ProcessStartInfo
+                {
+                    FileName = "ffmpeg",
+                    Arguments = $@"-i ""{file}"" -ac 2 -f s16le -ar 48000 pipe:1",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false
+                }, vnc));
+            }
             
-            await proc.play();
-
+            await processes[ctx.Guild.Id].play();
             await vnc.SendSpeakingAsync(false);
         }
     }
