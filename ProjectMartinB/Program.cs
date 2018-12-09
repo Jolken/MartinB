@@ -18,7 +18,7 @@ namespace ProjectMartinB
 {
     class ProcessExt
     {
-
+        public string file;
         static VoiceNextConnection _vnc;
         public Process proc;
         static Stream ffout;
@@ -39,7 +39,7 @@ namespace ProjectMartinB
                 Console.Write(e);
             }
         }
-
+        
         public async Task play()
         {
             using (var ms = new MemoryStream())
@@ -65,7 +65,7 @@ namespace ProjectMartinB
     class MartinCommands
     {
         Dictionary<ulong, ProcessExt> processes = new Dictionary<ulong, ProcessExt> { };
-        static string byeSong = "MartinBye.mp3";
+        static string byeSong = "MartinBye2.mp3";
         static List<string> joinSong = new List<string> { "MartinB.mp3", "MartinB2.mp3", "MartinB3.mp3" };
 
         [Command("who")]
@@ -74,6 +74,7 @@ namespace ProjectMartinB
             await ctx.RespondAsync($"МБ я, МБ! Уродина, {ctx.User.Mention}!");
         }
 
+        [RequireOwner]
         [Command("join")]
         public async Task Join(CommandContext ctx)
         {
@@ -91,6 +92,7 @@ namespace ProjectMartinB
             await this.Play(ctx, joinSong[new Random().Next(joinSong.Count)]);
         }
 
+        [RequireOwner]
         [Command("leave")]
         public async Task Leave(CommandContext ctx)
         {
@@ -104,28 +106,50 @@ namespace ProjectMartinB
             vnc.Disconnect();
             await ctx.RespondAsync("👌");
         }
+
+        [RequireOwner]
         [Command("play")]
-        public async Task Play(CommandContext ctx, [RemainingText] string file)
+        public async Task Play(CommandContext ctx, string playing)
         {
+            
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
             var vnext = ctx.Client.GetVoiceNextClient();
 
             var vnc = vnext.GetConnection(ctx.Guild);
             if (vnc == null)
                 throw new InvalidOperationException("Not connected in this guild.");
 
-            if (!File.Exists(file))
-                throw new FileNotFoundException("File was not found.");
+            //if (!File.Exists(file)) 
+            //    throw new FileNotFoundException("File was not found.");
 
             await ctx.RespondAsync("👌");
             await vnc.SendSpeakingAsync(true);
 
 
-            Console.Write(processes.ContainsKey(ctx.Guild.Id));
+            string program;
+            string arg;
+            if (playing.StartsWith("http"))
+            {
+                program = "youtube-dl";
+                arg = $@"-f 140 -o {ctx.Guild.Id}.m4a {playing}";
+                if (File.Exists($"./{ctx.Guild.Id}.m4a"))
+                {
+                    File.Delete($"./{ctx.Guild.Id}.m4a");
+                }
+            }
+            else
+            {
+                program = "ffmpeg";
+                arg = $@"-i ""{playing}"" -ac 2 -f s16le -ar 48000 pipe:1";
+            }
+
+
             if (processes.ContainsKey(ctx.Guild.Id))
             {
                 try
                 {
-                    //processes[ctx.Guild.Id].stopped = true;
+                    processes[ctx.Guild.Id].stopped = true;
                 }
                 catch (Exception e)
                 {
@@ -134,8 +158,8 @@ namespace ProjectMartinB
 
                 processes[ctx.Guild.Id] = new ProcessExt(new ProcessStartInfo
                 {
-                    FileName = "ffmpeg",
-                    Arguments = $@"-i ""{file}"" -ac 2 -f s16le -ar 48000 pipe:1",
+                    FileName = program,
+                    Arguments = arg,
                     RedirectStandardOutput = true,
                     RedirectStandardInput = true,
                     UseShellExecute = false
@@ -145,20 +169,25 @@ namespace ProjectMartinB
             {
                 processes.Add(ctx.Guild.Id, new ProcessExt(new ProcessStartInfo
                 {
-                    FileName = "ffmpeg",
-                    Arguments = $@"-i ""{file}"" -ac 2 -f s16le -ar 48000 pipe:1",
+                    FileName = program,
+                    Arguments = arg,
                     RedirectStandardOutput = true,
                     RedirectStandardInput = true,
                     UseShellExecute = false
                 }, vnc));
             }
-
             await processes[ctx.Guild.Id].play();
             
             await vnc.SendSpeakingAsync(false);
 
+
             GC.Collect();
             GC.WaitForPendingFinalizers();
+
+            if (playing.StartsWith("http"))
+            {
+                await Play(ctx, ctx.Guild.Id.ToString() + ".m4a");
+            }
         }
     }
     class Program
@@ -209,7 +238,7 @@ namespace ProjectMartinB
 
             discord.MessageCreated += async e =>
             {
-                if (await checkUser(e))
+                if (Program.checkUser(e))
                 {
                     await analyzeMessage(e.Message);
                 }
@@ -236,9 +265,9 @@ namespace ProjectMartinB
 
         }
 
-        static async Task<bool> checkUser(DSharpPlus.EventArgs.MessageCreateEventArgs message)
+        static bool checkUser(DSharpPlus.EventArgs.MessageCreateEventArgs message)
         {
-            return ((WHITELIST.Contains(message.Author.Id))) || !message.Author.IsBot;
+            return ((Program.WHITELIST.Contains(message.Author.Id))) || !message.Author.IsBot;
         }
     }
     public struct ConfigJson
