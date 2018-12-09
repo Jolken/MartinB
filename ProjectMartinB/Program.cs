@@ -9,17 +9,20 @@ using DSharpPlus.CommandsNext.Attributes;
 using System.IO;
 using System.Diagnostics;
 using System.Reflection;
+using System.Text;
 /*   Invite link
-*   https://discordapp.com/oauth2/authorize?client_id=519613874564104202&scope=bot&permissions=8
+*   https://discordapp.com/oauth2/authorize?client_id=521057341563469844&scope=bot&permissions=36883520
 * 
 */
 namespace ProjectMartinB
 {
     class ProcessExt
     {
+
         static VoiceNextConnection _vnc;
-        static Process proc;
+        public Process proc;
         static Stream ffout;
+        public bool stopped = false;
 
         public ProcessExt(ProcessStartInfo psi, VoiceNextConnection vnc)
         {
@@ -48,6 +51,8 @@ namespace ProjectMartinB
                 var br = 0;
                 while ((br = ms.Read(buff, 0, buff.Length)) > 0)
                 {
+                    if (stopped)
+                        break;
                     if (br < buff.Length) // it's possible we got less than expected, let's null the remaining part of the buffer
                         for (var i = br; i < buff.Length; i++)
                             buff[i] = 0;
@@ -61,7 +66,7 @@ namespace ProjectMartinB
     {
         Dictionary<ulong, ProcessExt> processes = new Dictionary<ulong, ProcessExt> { };
         static string byeSong = "MartinBye.mp3";
-        static List<string> joinSong = new List<string> {"MartinB.mp3", "MartinB2.mp3", "MartinB3.mp3"};
+        static List<string> joinSong = new List<string> { "MartinB.mp3", "MartinB2.mp3", "MartinB3.mp3" };
 
         [Command("who")]
         public async Task who(CommandContext ctx)
@@ -114,13 +119,25 @@ namespace ProjectMartinB
             await ctx.RespondAsync("👌");
             await vnc.SendSpeakingAsync(true);
 
+
+            Console.Write(processes.ContainsKey(ctx.Guild.Id));
             if (processes.ContainsKey(ctx.Guild.Id))
             {
+                try
+                {
+                    //processes[ctx.Guild.Id].stopped = true;
+                }
+                catch (Exception e)
+                {
+                    processes.Remove(ctx.Guild.Id);
+                }
+
                 processes[ctx.Guild.Id] = new ProcessExt(new ProcessStartInfo
                 {
                     FileName = "ffmpeg",
                     Arguments = $@"-i ""{file}"" -ac 2 -f s16le -ar 48000 pipe:1",
                     RedirectStandardOutput = true,
+                    RedirectStandardInput = true,
                     UseShellExecute = false
                 }, vnc);
             }
@@ -131,32 +148,43 @@ namespace ProjectMartinB
                     FileName = "ffmpeg",
                     Arguments = $@"-i ""{file}"" -ac 2 -f s16le -ar 48000 pipe:1",
                     RedirectStandardOutput = true,
+                    RedirectStandardInput = true,
                     UseShellExecute = false
                 }, vnc));
             }
-            
+
             await processes[ctx.Guild.Id].play();
+            
             await vnc.SendSpeakingAsync(false);
+
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
         }
     }
     class Program
     {
         static VoiceNextClient voice;
         static DiscordClient discord { get; set; }
-        static List<Int64> BLACKLIST = new List<Int64>();
+        static List<ulong> WHITELIST = new List<ulong>();
         static CommandsNextModule commands;
 
         static void Main(string[] args)
         {
-            Console.Write(System.IO.Path.GetDirectoryName(Assembly.GetEntryAssembly().Location));
             MainAsync(args).GetAwaiter().GetResult();
         }
 
         static async Task MainAsync(string[] args)
         {
+
+            var json = "";
+            using (var fs = File.OpenRead("config.json"))
+            using (var sr = new StreamReader(fs, new UTF8Encoding(false)))
+                json = await sr.ReadToEndAsync();
+            var cfgjson = Newtonsoft.Json.JsonConvert.DeserializeObject<ConfigJson>(json);
+
             discord = new DiscordClient(new DiscordConfiguration
             {
-                Token = "NTE5NjEzODc0NTY0MTA0MjAy.DusPDg.4k6sxJ0hHnRmuIdD17TZr5DJOJ0",
+                Token = cfgjson.Token,
                 TokenType = TokenType.Bot,
                 UseInternalLogHandler = true,
                 LogLevel = LogLevel.Debug,
@@ -165,7 +193,7 @@ namespace ProjectMartinB
 
             var commands = discord.UseCommandsNext(new CommandsNextConfiguration
             {
-                StringPrefix = "m/",
+                StringPrefix = cfgjson.CommandPrefix,
                 EnableDms = false,
                 EnableMentionPrefix = true
             });
@@ -176,7 +204,7 @@ namespace ProjectMartinB
             };
 
             var voice = discord.UseVoiceNext(vcfg);
-            BLACKLIST.Add(519613874564104202);
+            WHITELIST.Add(193792509225336832);
 
 
             discord.MessageCreated += async e =>
@@ -195,7 +223,8 @@ namespace ProjectMartinB
 
         static async Task analyzeMessage(DSharpPlus.Entities.DiscordMessage message)
         {
-            switch (message.Content.ToLower()) {
+            switch (message.Content.ToLower())
+            {
                 case "ping":
                     await message.RespondAsync("pong!");
                     break;
@@ -209,7 +238,15 @@ namespace ProjectMartinB
 
         static async Task<bool> checkUser(DSharpPlus.EventArgs.MessageCreateEventArgs message)
         {
-            return ((BLACKLIST.Contains(message.Author.GetHashCode())) || !message.Author.IsBot);
+            return ((WHITELIST.Contains(message.Author.Id))) || !message.Author.IsBot;
         }
+    }
+    public struct ConfigJson
+    {
+        [Newtonsoft.Json.JsonProperty("token")]
+        public string Token { get; private set; }
+
+        [Newtonsoft.Json.JsonProperty("prefix")]
+        public string CommandPrefix { get; private set; }
     }
 }
